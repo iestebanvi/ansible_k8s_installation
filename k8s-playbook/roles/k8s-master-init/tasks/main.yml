@@ -1,0 +1,88 @@
+---
+- name: Check if cluster is already initialized
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_admin_conf
+
+- name: Create kubeadm config
+  template:
+    src: kubeadm-config.yaml.j2
+    dest: /root/kubeadm-config.yaml
+  when: not k8s_admin_conf.stat.exists
+
+- name: Initialize Kubernetes cluster
+  shell: kubeadm init --config /root/kubeadm-config.yaml --upload-certs
+  register: kubeadm_init_result
+  when: not k8s_admin_conf.stat.exists
+
+- name: Fix kube-vip admin.conf path after init
+  replace:
+    path: /etc/kubernetes/manifests/kube-vip.yaml
+    regexp: 'path: /etc/kubernetes/super-admin.conf'
+    replace: 'path: /etc/kubernetes/admin.conf'
+  when: not k8s_admin_conf.stat.exists
+
+# Generar tokens dinámicamente si el cluster se acaba de inicializar
+- name: Generate new bootstrap token
+  shell: kubeadm token create
+  register: bootstrap_token
+  when: not k8s_admin_conf.stat.exists
+
+- name: Get discovery token hash
+  shell: |
+    openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | \
+    openssl dgst -sha256 -hex | sed 's/^.* /sha256:/'
+  register: discovery_token_hash
+  when: not k8s_admin_conf.stat.exists
+
+- name: Generate certificate key for joining masters
+  shell: kubeadm certs certificate-key
+  register: certificate_key
+  when: not k8s_admin_conf.stat.exists
+
+- name: Upload certificates with generated key
+  shell: kubeadm init phase upload-certs --certificate-key {{ certificate_key.stdout }}
+  when: not k8s_admin_conf.stat.exists
+
+# Si el cluster ya existe, usar tokens existentes o generar nuevos
+- name: Generate new bootstrap token for existing cluster
+  shell: kubeadm token create
+  register: bootstrap_token
+  when: k8s_admin_conf.stat.exists
+
+- name: Get discovery token hash for existing cluster
+  shell: |
+    openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | \
+    openssl dgst -sha256 -hex | sed 's/^.* /sha256:/'
+  register: discovery_token_hash
+  when: k8s_admin_conf.stat.exists
+
+- name: Generate certificate key for existing cluster
+  shell: kubeadm certs certificate-key
+  register: certificate_key
+  when: k8s_admin_conf.stat.exists
+
+- name: Upload certificates for existing cluster
+  shell: kubeadm init phase upload-certs --certificate-key {{ certificate_key.stdout }}
+  when: k8s_admin_conf.stat.exists
+
+# Set facts que serán usados por otros nodos (nombres consistentes con tu script)
+- name: Set join tokens as facts
+  set_fact:
+    kubeadm_token: "{{ bootstrap_token.stdout }}"
+    kubeadm_discovery_token: "{{ discovery_token_hash.stdout }}"
+    kubeadm_cert_key: "{{ certificate_key.stdout }}"
+
+- name: Display kubeadm init output
+  debug:
+    var: kubeadm_init_result.stdout_lines
+  when: 
+    - not k8s_admin_conf.stat.exists
+    - kubeadm_init_result is defined
+
+- name: Display generated tokens
+  debug:
+    msg:
+      - "Bootstrap token: {{ kubeadm_token }}"
+      - "Discovery token: {{ kubeadm_discovery_token }}"
+      - "Certificate key: {{ kubeadm_cert_key }}"

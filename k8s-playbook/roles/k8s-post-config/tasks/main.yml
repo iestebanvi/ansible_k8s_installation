@@ -1,0 +1,47 @@
+---
+- name: Get node IP from interface
+  shell: |
+    ip a | grep {{ host_interface }} -A2 | grep 'inet ' | awk '{print $2}' | awk -F/ '{print $1}' | head -1
+  register: node_ip
+
+- name: Find kubelet systemd configuration file
+  stat:
+    path: "{{ item }}"
+  register: kubelet_config_files
+  loop:
+    - /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+    - /lib/systemd/system/kubelet.service.d/10-kubeadm.conf
+
+- name: Set kubelet config file path
+  set_fact:
+    kubelet_systemd_file: "{{ item.item }}"
+  when: item.stat.exists
+  loop: "{{ kubelet_config_files.results }}"
+
+- name: Fail if kubelet config file not found
+  fail:
+    msg: "Kubelet systemd config file not found"
+  when: kubelet_systemd_file is not defined
+
+- name: Configure kubelet node-ip
+  replace:
+    path: "{{ kubelet_systemd_file }}"
+    regexp: 'Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"'
+    replace: 'Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml --node-ip={{ node_ip.stdout }}"'
+    backup: yes
+  notify:
+    - reload systemd
+    - restart kubelet
+
+- name: Configure file limits
+  copy:
+    content: '*     -   nofile  165535'
+    dest: /etc/security/limits.d/caas.conf
+
+- name: Configure system file limits
+  copy:
+    content: |
+      fs.file-max = 5000000
+      fs.inotify.max_user_instances = 256
+    dest: /etc/sysctl.d/90-caas-file-limits.conf
+  notify: reload sysctl

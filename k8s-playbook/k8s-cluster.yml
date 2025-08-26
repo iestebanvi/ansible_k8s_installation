@@ -1,0 +1,31 @@
+---
+- name: Prepare all Kubernetes nodes
+  hosts: kubernetes
+  become: yes
+  roles:
+    - k8s-prep
+
+- name: Initialize first master
+  hosts: masters[0]  # Solo el primer master del grupo
+  become: yes
+  roles:
+    - k8s-master-init
+
+- name: Join additional masters
+  hosts: masters[1:]  # Todos excepto el primero
+  become: yes
+  roles:
+    - k8s-master-join
+
+- name: Join workers
+  hosts: workers
+  become: yes
+  roles:
+    - k8s-worker-join
+  when: groups['workers'] | length > 0
+
+- name: Post-installation configuration
+  hosts: kubernetes
+  become: yes
+  roles:
+    - k8s-post-config

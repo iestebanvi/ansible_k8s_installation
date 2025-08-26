@@ -1,0 +1,28 @@
+---
+- name: Check if node is already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Wait for first master to generate tokens
+  wait_for:
+    timeout: 30
+  delegate_to: localhost
+
+- name: Debug tokens from first master
+  debug:
+    msg:
+      - "Token: {{ hostvars[groups['masters'][0]]['kubeadm_token'] }}"
+      - "Discovery: {{ hostvars[groups['masters'][0]]['kubeadm_discovery_token'] }}"
+      - "Cert key: {{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}"
+
+- name: Join additional master to cluster
+  shell: |
+    kubeadm join \
+      --ignore-preflight-errors=DirAvailable--etc-kubernetes-manifests \
+      {{ k8s_api_ip }}:6443 \
+      --control-plane \
+      --token "{{ hostvars[groups['masters'][0]]['kubeadm_token'] }}" \
+      --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]]['kubeadm_discovery_token'] }}" \
+      --certificate-key {{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}
+  when: not kubelet_conf.stat.exists

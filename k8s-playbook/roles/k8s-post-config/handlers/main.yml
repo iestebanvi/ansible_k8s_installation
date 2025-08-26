@@ -1,0 +1,12 @@
+---
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: restart kubelet
+  systemd:
+    name: kubelet
+    state: restarted
+
+- name: reload sysctl
+  shell: sysctl --system -p

@@ -1,0 +1,15 @@
+version = 2
+[plugins."io.containerd.grpc.v1.cri"]
+  sandbox_image = "artifactory.devops.telekom.de/registry.k8s.io/pause:{{ pause_version }}"
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+    runtime_type = "io.containerd.runc.v2"
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+      SystemdCgroup = true
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors."artifactory.devops.telekom.de"]
+        endpoint = ["https://artifactory.devops.telekom.de"]
+    [plugins."io.containerd.grpc.v1.cri".registry.configs]
+      [plugins."io.containerd.grpc.v1.cri".registry.configs."artifactory.devops.telekom.de".auth]
+        username = "{{ af_username }}"
+        password = "{{ af_api_token }}"
