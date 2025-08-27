@@ -33,7 +33,7 @@
 
 - name: Disable swap
   shell: swapoff /swap.img
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Remove swap from fstab
   lineinfile:
@@ -41,12 +41,30 @@
     regexp: '.*swap.*'
     state: absent
 
-# Configuración de repositorios y containerd (ACTUALIZADO)
-- name: Create APT keyrings directory
-  file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: '0755'
+
+- name: Update package cache
+  apt:
+    update_cache: yes
+
+# Instalar paquetes básicos
+- name: Install Kubernetes packages
+  apt:
+    name:
+      - "cri-tools={{ cri_tools_version }}"
+      - runc
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - "kubelet={{ kube_version }}"
+      - "kubeadm={{ kube_version }}"
+      - "kubectl={{ kube_version }}"
+      - socat
+      - ebtables
+      - conntrack
+      - kubernetes-cni
+    state: present
+    allow_change_held_packages: yes
+    allow_downgrade: yes
 
 - name: Add Kubernetes APT key from new Artifactory
   shell: |
@@ -59,53 +77,26 @@
     content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://artifactory.caas.in.pan-net.eu/repository/kubernetes-v1-32/ /"
     dest: /etc/apt/sources.list.d/kubernetes.list
 
-- name: Configure APT proxy
-  copy:
-    content: |
-      Acquire::http::Proxy "http://{{ apt_proxy }}:8000";
-      Acquire::https::Proxy "http://{{ apt_proxy }}:8000";
-    dest: /etc/apt/apt.conf.d/proxy.conf
-
-- name: Update package cache
+- name: Update package cache after adding repository
   apt:
     update_cache: yes
 
-# Instalación de containerd (mantiene URLs originales para containerd)
+# Descargar e instalar containerd (sin autenticación como en tu script)
 - name: Download containerd archive
   get_url:
-    url: "https://artifactory.devops.telekom.de/artifactory/tdi-caas-generic-local/mt-fehervari/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
-    dest: "/tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
-    headers:
-      X-JFrog-Art-Api: "{{ caas_sa_af_token }}"
+    url: "https://artifactory.caas.in.pan-net.eu/repository/images/containerd/containerd-1.7.22-linux-amd64.tar.gz"
+    dest: "/tmp/containerd-1.7.22-linux-amd64.tar.gz"
 
 - name: Extract containerd
   unarchive:
-    src: "/tmp/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+    src: "/tmp/containerd-1.7.22-linux-amd64.tar.gz"
     dest: /usr/local
     remote_src: yes
 
 - name: Download containerd service file
   get_url:
-    url: "https://artifactory.devops.telekom.de/artifactory/tdi-caas-generic-local/mt-fehervari/containerd.service"
+    url: "https://artifactory.caas.in.pan-net.eu/repository/images/containerd/containerd.service"
     dest: /usr/lib/systemd/system/containerd.service
-    headers:
-      X-JFrog-Art-Api: "{{ caas_sa_af_token }}"
-
-# Instalación de paquetes Kubernetes (ACTUALIZADO)
-- name: Install Kubernetes packages
-  apt:
-    name:
-      - "cri-tools={{ cri_tools_version }}"
-      - runc
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - "kubelet={{ kube_version }}"
-      - "kubeadm={{ kube_version }}"
-      - "kubectl={{ kube_version }}"
-    state: present
-    allow_change_held_packages: yes
-    allow_downgrade: yes
 
 - name: Reload systemd and enable containerd
   systemd:
@@ -114,6 +105,16 @@
     enabled: yes
     state: started
 
+# Configurar crictl
+- name: Configure crictl
+  copy:
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+    dest: /etc/crictl.yaml
+
+# Hold de paquetes
 - name: Hold Kubernetes packages
   dpkg_selections:
     name: "{{ item }}"
@@ -124,67 +125,40 @@
     - kubectl
     - containerd
 
-# Configuración de containerd (ACTUALIZADO)
-- name: Create containerd config directory
-  file:
-    path: /etc/containerd
-    state: directory
-    mode: '0755'
-
-- name: Configure containerd
-  template:
-    src: containerd-config.toml.j2
-    dest: /etc/containerd/config.toml
-  notify: restart containerd
-
-# Configurar kube-vip solo en masters (ACTUALIZADO)
-- name: Check if kube-vip manifest exists
-  stat:
-    path: /etc/kubernetes/manifests/kube-vip.yaml
-  register: kube_vip_manifest
-  when: inventory_hostname in groups['masters']
-
-- name: Configure crictl for kube-vip
+# Configuración de logging para iptables-events
+- name: Configure rsyslog for iptables events
   copy:
     content: |
-      runtime-endpoint: unix:///run/containerd/containerd.sock
-      image-endpoint: unix:///run/containerd/containerd.sock
-      timeout: 10
-    dest: /etc/crictl.yaml
-  when: 
-    - inventory_hostname in groups['masters']
-    - not kube_vip_manifest.stat.exists
+      if $msg contains "calico-packet:" then {
+              action(type="omfile" file="/var/log/iptables.log" template="RSYSLOG_FileFormat")
+              & stop
+      }
+    dest: /etc/rsyslog.d/40-iptables.conf
 
-- name: Pull kube-vip image
-  shell: |
-    crictl --debug pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
-    ctr images pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
-  when: 
-    - inventory_hostname in groups['masters']
-    - not kube_vip_manifest.stat.exists
+- name: Configure logrotate for iptables
+  copy:
+    content: |
+      /var/log/iptables.log
+      {
+              rotate 3
+              daily
+              missingok
+              notifempty
+              delaycompress
+              compress
+              postrotate
+              /usr/lib/rsyslog/rsyslog-rotate
+              endscript
+      }
+    dest: /etc/logrotate.d/iptables
 
-- name: Create kubernetes manifests directory
-  file:
-    path: /etc/kubernetes/manifests
-    state: directory
-    mode: '0755'
-  when: inventory_hostname in groups['masters']
+- name: Restart rsyslog
+  systemd:
+    name: rsyslog
+    state: restarted
 
-- name: Generate kube-vip manifest
-  shell: |
-    ctr --namespace k8s.io run --rm --net-host \
-      artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }} vip \
-      /kube-vip manifest pod --arp --interface {{ dth_interface }} \
-      --vip {{ k8s_api_ip }} --controlplane --leaderElection > /etc/kubernetes/manifests/kube-vip.yaml
-  when: 
-    - inventory_hostname in groups['masters']
-    - not kube_vip_manifest.stat.exists
+- name: Restart logrotate
+  systemd:
+    name: logrotate
+    state: restarted
 
-- name: Fix kube-vip image registry
-  replace:
-    path: /etc/kubernetes/manifests/kube-vip.yaml
-    regexp: 'ghcr.io'
-    replace: 'artifactory-virtual.caas.in.pan-net.eu'
-  when: 
-    - inventory_hostname in groups['masters']
-    - not kube_vip_manifest.stat.exists

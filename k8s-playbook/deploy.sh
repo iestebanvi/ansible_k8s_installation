@@ -70,16 +70,16 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
 fi
 
 # Configurar valores por defecto (ACTUALIZADOS)
-: ${AF_USERNAME:="sa_tdi-caas-r"}                # ACTUALIZADO: ahora con -r
-: ${KUBE_VERSION:="1.32.2-1.1"}                 # ACTUALIZADO
-: ${CRI_TOOLS_VERSION:="1.32.0-1.1"}            # ACTUALIZADO  
+: ${AF_USERNAME:="sa_tdi-caas-r"}
+: ${KUBE_VERSION:="1.32.2-1.1"}
+: ${CRI_TOOLS_VERSION:="1.32.0-1.1"}
 : ${KUBE_VIP_VERSION:="v0.6.4"}
-: ${CONTAINERD_VERSION:="1.7.13"}
-: ${PAUSE_VERSION:="3.10"}                       # ACTUALIZADO
+: ${CONTAINERD_VERSION:="1.7.22"}
+: ${PAUSE_VERSION:="3.10"}
 : ${CNI_PLUGIN_VERSION:="v1.4.0"}
-: ${DTH_INTERFACE:="ens7"}                       # ACTUALIZADO
+: ${DTH_INTERFACE:="ens7"}
 : ${HOST_INTERFACE:="ens4"}
-: ${ANSIBLE_SSH_USER:="ubuntu"}                  # NUEVO: Usuario SSH por defecto
+: ${ANSIBLE_SSH_USER:="ubuntu"}
 
 # Variables que SÍ necesitan ser definidas obligatoriamente
 REQUIRED_VARS=(

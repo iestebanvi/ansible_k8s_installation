@@ -3,3 +3,13 @@
   systemd:
     name: containerd
     state: restarted
+
+- name: restart rsyslog
+  systemd:
+    name: rsyslog
+    state: restarted
+
+- name: restart logrotate
+  systemd:
+    name: logrotate
+    state: restarted

@@ -4,6 +4,39 @@
     path: /etc/kubernetes/admin.conf
   register: k8s_admin_conf
 
+# Configurar kube-vip antes de inicializar el cluster
+- name: Check if kube-vip manifest exists
+  stat:
+    path: /etc/kubernetes/manifests/kube-vip.yaml
+  register: kube_vip_manifest
+
+- name: Pull kube-vip image
+  shell: |
+    crictl --debug pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
+    ctr images pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
+  when: not kube_vip_manifest.stat.exists
+
+- name: Create kubernetes manifests directory
+  file:
+    path: /etc/kubernetes/manifests
+    state: directory
+    mode: '0755'
+
+- name: Generate kube-vip manifest
+  shell: |
+    ctr --namespace k8s.io run --rm --net-host \
+      artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }} vip \
+      /kube-vip manifest pod --arp --interface {{ dth_interface }} \
+      --vip {{ k8s_api_ip }} --controlplane --leaderElection > /etc/kubernetes/manifests/kube-vip.yaml
+  when: not kube_vip_manifest.stat.exists
+
+- name: Fix kube-vip image registry
+  replace:
+    path: /etc/kubernetes/manifests/kube-vip.yaml
+    regexp: 'ghcr.io'
+    replace: 'artifactory-virtual.caas.in.pan-net.eu'
+  when: not kube_vip_manifest.stat.exists
+
 - name: Create kubeadm config
   template:
     src: kubeadm-config.yaml.j2
@@ -11,7 +44,7 @@
   when: not k8s_admin_conf.stat.exists
 
 - name: Initialize Kubernetes cluster
-  shell: kubeadm init --config /root/kubeadm-config.yaml --upload-certs
+  shell: kubeadm init --config /root/kubeadm-config.yaml --skip-phases addon/coredns,addon/kube-proxy --upload-certs
   register: kubeadm_init_result
   when: not k8s_admin_conf.stat.exists
 
@@ -86,3 +119,5 @@
       - "Bootstrap token: {{ kubeadm_token }}"
       - "Discovery token: {{ kubeadm_discovery_token }}"
       - "Certificate key: {{ kubeadm_cert_key }}"
+      - "IMPORTANT: CoreDNS and kube-proxy phases were skipped"
+      - "You'll need to install these components separately"

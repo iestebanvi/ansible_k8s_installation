@@ -24,5 +24,5 @@
       --control-plane \
       --token "{{ hostvars[groups['masters'][0]]['kubeadm_token'] }}" \
       --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]]['kubeadm_discovery_token'] }}" \
-      --certificate-key {{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}
+      --certificate-key "{{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}"
   when: not kubelet_conf.stat.exists
