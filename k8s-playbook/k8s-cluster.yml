@@ -2,30 +2,35 @@
 - name: Prepare all Kubernetes nodes
   hosts: kubernetes
   become: yes
+  tags: ['prep', 'preparation', 'system']
   roles:
     - k8s-prep
 
 - name: Initialize first master
-  hosts: masters[0]  # Solo el primer master del grupo
+  hosts: masters[0]
   become: yes
+  tags: ['master-init', 'init', 'cluster-init']
   roles:
     - k8s-master-init
 
 - name: Join additional masters
-  hosts: masters[1:]  # Todos excepto el primero
+  hosts: masters[1:]
   become: yes
+  tags: ['master-join', 'join', 'masters']
   roles:
     - k8s-master-join
 
 - name: Join workers
   hosts: workers
   become: yes
+  tags: ['worker-join', 'join', 'workers']
   roles:
-    - k8s-worker-join
-  when: groups['workers'] | length > 0
+    - role: k8s-worker-join
+      when: groups['workers'] | length > 0
 
 - name: Post-installation configuration
   hosts: kubernetes
   become: yes
+  tags: ['post-config', 'config', 'finalize']
   roles:
     - k8s-post-config

@@ -1,158 +1,250 @@
 # Kubernetes Cluster Deployment with Ansible
 
-Este playbook automatiza la instalación de un cluster Kubernetes con alta disponibilidad usando kubeadm, basado en el script bash original.
+This playbook automates the installation of a high-availability Kubernetes cluster using kubeadm, based on the original bash script.
 
-## Características
+## Features
 
-- **3 Masters en HA** con kube-vip para failover del API server
-- **Workers opcionales** o uso de masters como workers (sin taint)
-- **Generación dinámica de tokens** - no necesitas pre-generar tokens manualmente
-- **Configuración completa** incluyendo containerd, registries privados, proxy APT
-- **Idempotente** - puede ejecutarse múltiples veces de forma segura
+- **3 Masters in HA** with kube-vip for API server failover
+- **Optional workers** or use masters as workers (without taint)
+- **Dynamic token generation** - no need to pre-generate tokens manually
+- **Complete configuration** including containerd, private registries, APT proxy
+- **Idempotent** - can be executed multiple times safely
+- **Phase-based execution** with tags for granular control
+- **Dry-run support** for safe testing
+- **Default values** for common variables to simplify configuration
 
-## Estructura del Proyecto
+## Project Structure
 
 ```
 k8s-playbook/
-├── k8s-cluster.yml              # Playbook principal
-├── deploy.sh                    # Script para ejecutar el despliegue
-├── set-vars-example.sh          # Ejemplo de variables de entorno
+├── k8s-cluster.yml              # Main playbook
+├── deploy.sh                    # Deployment script
+├── set-vars-example.sh          # Environment variables example
 ├── inventory/
-│   └── hosts.yml               # Inventario de hosts
+│   └── hosts.yml               # Host inventory
 └── roles/
-    ├── k8s-prep/               # Preparación del sistema y paquetes
-    ├── k8s-master-init/        # Inicialización del primer master
-    ├── k8s-master-join/        # Join de masters adicionales
-    ├── k8s-worker-join/        # Join de workers
-    └── k8s-post-config/        # Configuración post-instalación
+    ├── k8s-prep/               # System preparation and packages
+    ├── k8s-master-init/        # First master initialization
+    ├── k8s-master-join/        # Additional masters join
+    ├── k8s-worker-join/        # Workers join
+    └── k8s-post-config/        # Post-installation configuration
 ```
 
-## Configuración Previa
+## Initial Setup
 
-### 1. Ajustar el Inventory
+### 1. Adjust the Inventory
 
-Edita `inventory/hosts.yml` con las IPs reales de tus nodos:
+Edit `inventory/hosts.yml` with your real node IPs:
 
 ```yaml
 masters:
-  hosts:
+  hosts:   # Order master1, master2, master3 should be preserved!
     caas-master-1:
-      ansible_host: TU_IP_MASTER_1
+      ansible_host: YOUR_MASTER_1_IP
     caas-master-2:
-      ansible_host: TU_IP_MASTER_2
+      ansible_host: YOUR_MASTER_2_IP
     caas-master-3:
-      ansible_host: TU_IP_MASTER_3
+      ansible_host: YOUR_MASTER_3_IP
 workers:
   hosts:
     caas-worker-1:
-      ansible_host: TU_IP_WORKER_1
+      ansible_host: YOUR_WORKER_1_IP
     caas-worker-2:
-      ansible_host: TU_IP_WORKER_2
+      ansible_host: YOUR_WORKER_2_IP
 ```
 
-### 2. Configurar Variables
+### 2. Configure Variables
 
 ```bash
-# Copia y ajusta las variables
+# Copy and adjust the variables
 cp set-vars-example.sh set-vars.sh
 nano set-vars.sh
 
-# Carga las variables
+# Load the variables
 source set-vars.sh
 ```
 
-### Variables requeridas:
+### Required Variables (must be set):
 
 ```bash
-# Credenciales (eliminar después)
-AF_USERNAME="sa_tdi-caas"
-AF_API_TOKEN="password"
-CAAS_SA_AF_TOKEN="token"
+# Credentials (delete after installation)
+AF_API_TOKEN="password_of_sa_tdi-caas"
+CAAS_SA_AF_TOKEN="token_of_sa_tdi-caas"
 
-# Versiones
+# Infrastructure
+K8S_API_IP="10.0.1.100"       # Virtual IP for API server
+APT_PROXY="10.0.1.50"         # Proxy server IP
+```
+
+### Variables with Default Values (optional to override):
+
+```bash
+# User (default: sa_tdi-caas)
+AF_USERNAME="sa_tdi-caas"
+
+# Versions (default: stable versions)
 KUBE_VERSION="1.27.5-00"
 CONTAINERD_VERSION="1.7.13"
 KUBE_VIP_VERSION="v0.6.4"
+CRI_TOOLS_VERSION="1.26.0-00"
+PAUSE_VERSION="3.9"
+CNI_PLUGIN_VERSION="v1.4.0"
 
-# Red e infraestructura
-K8S_API_IP="10.0.1.100"       # IP virtual del API server
-DTH_INTERFACE="ens8"          # Interface para kube-vip
-HOST_INTERFACE="ens4"         # Interface principal
-APT_PROXY="10.0.1.50"         # Servidor proxy
+# Network interfaces (default: ens8/ens4)
+DTH_INTERFACE="ens8"          # Interface for kube-vip
+HOST_INTERFACE="ens4"         # Main host interface
 ```
 
-## Uso
+## Usage
 
-### Despliegue Completo (3 masters + 2 workers)
+### Quick Start (Recommended)
 
 ```bash
+# 1. Configure essential variables only
 source set-vars.sh
+
+# 2. Test what would be done
+./deploy.sh --check
+
+# 3. Deploy step by step
+./deploy.sh --tags prep        # Prepare systems
+./deploy.sh --tags master-init # Initialize cluster
+./deploy.sh --tags join        # Join all nodes
+
+# 4. Or deploy everything at once
 ./deploy.sh
 ```
 
-### Solo Masters (sin workers)
-
-1. Edita `inventory/hosts.yml` y deja vacío el grupo `workers`
-2. Los masters funcionarán también como workers automáticamente
+### Phase-based Deployment (Recommended for first use)
 
 ```bash
-source set-vars.sh
-./deploy.sh
+# 1. Verify system preparation
+./deploy.sh --check --tags prep
+
+# 2. Apply system preparation
+./deploy.sh --tags prep
+
+# 3. Verify cluster initialization
+./deploy.sh --check --tags master-init
+
+# 4. Initialize the cluster
+./deploy.sh --tags master-init
+
+# 5. Join additional masters
+./deploy.sh --tags master-join
+
+# 6. Join workers (if any)
+./deploy.sh --tags worker-join
+
+# 7. Final configuration
+./deploy.sh --tags post-config
 ```
 
-### Opciones avanzadas
+### Available Tags
+
+| Tag | Description |
+|-----|-------------|
+| `prep`, `preparation`, `system` | System preparation and packages |
+| `master-init`, `init`, `cluster-init` | Cluster initialization |
+| `master-join`, `masters` | Join additional masters |
+| `worker-join`, `workers` | Join workers |
+| `join` | All joins (masters + workers) |
+| `post-config`, `config`, `finalize` | Final configuration |
+
+### Advanced Options
 
 ```bash
-# Ejecutar solo hasta cierto punto
-./deploy.sh --tags "prep"
+# Help and available options
+./deploy.sh --help
 
-# Modo debug
-./deploy.sh -vvv
+# Dry-run (no changes applied)
+./deploy.sh --check
 
-# Solo ciertos hosts
+# Dry-run specific phase
+./deploy.sh --check --tags prep
+
+# Skip certain phases
+./deploy.sh --skip-tags prep
+
+# Execute only on specific hosts
 ./deploy.sh --limit masters
+
+# Verbose mode
+./deploy.sh -v    # or -vv, -vvv for more detail
+
+# Combine options
+./deploy.sh --check --tags join --limit masters -v
 ```
 
-## Post-Instalación
+### Deployment Scenarios
 
-### 1. Verificar el cluster
+#### Full Deployment (3 masters + 2 workers)
+```bash
+source set-vars.sh
+./deploy.sh
+```
+
+#### Masters Only (no workers)
+1. Edit `inventory/hosts.yml` and leave `workers` group empty
+2. Masters will automatically function as workers
 
 ```bash
-# Conectar al primer master
+source set-vars.sh
+./deploy.sh
+```
+
+#### Add workers to existing cluster
+```bash
+# Only join workers to existing cluster
+./deploy.sh --tags worker-join
+```
+
+## Post-Installation
+
+### 1. Verify the Cluster
+
+```bash
+# Connect to first master
 ssh caas-master-1
 
-# Verificar nodos
+# Check nodes
 kubectl get nodes
 
-# Verificar pods del sistema
+# Check system pods
 kubectl get pods -A
 ```
 
-### 2. **IMPORTANTE: Limpiar credenciales**
+### 2. **IMPORTANT: Clean up credentials**
 
-Después de la instalación exitosa, elimina las credenciales:
+After successful installation, remove credentials:
 
 ```bash
-# En cada nodo, editar el archivo containerd
+# On each node, edit containerd config
 sudo nano /etc/containerd/config.toml
-# Eliminar o comentar las líneas de username/password
+# Remove or comment username/password lines
 
-# Reiniciar containerd
+# Restart containerd
 sudo systemctl restart containerd
+
+# Also clean environment variables
+unset AF_API_TOKEN CAAS_SA_AF_TOKEN
 ```
 
-### 3. Instalar CNI
+### 3. Install CNI
 
-El cluster quedará en estado `NotReady` hasta que instales un CNI:
+The cluster will remain `NotReady` until you install a CNI:
 
 ```bash
-# Ejemplo con Calico
+# Example with Calico
 kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+
+# Or with Flannel
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 ```
 
-### 4. (Opcional) Remover taint de masters
+### 4. (Optional) Remove master taints
 
-Si no tienes workers dedicados:
+If you don't have dedicated workers:
 
 ```bash
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
@@ -160,91 +252,179 @@ kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 
 ## Troubleshooting
 
-### Los nodos están en NotReady
-- Verificar que containerd esté ejecutándose: `systemctl status containerd`
-- Instalar un CNI plugin
-- Revisar logs: `journalctl -u kubelet -f`
+### Nodes are in NotReady state
+- Verify containerd is running: `systemctl status containerd`
+- Install a CNI plugin
+- Check logs: `journalctl -u kubelet -f`
 
-### Error de tokens
-- Los tokens se generan automáticamente
-- Si hay problemas, revisar logs del primer master: `journalctl -u kubeadm`
+### Token errors
+- Tokens are generated automatically
+- If there are issues, check first master logs: `journalctl -u kubeadm`
+- You can regenerate tokens: `kubeadm token create --print-join-command`
 
-### Problemas de conectividad
-- Verificar que el proxy APT esté accesible
-- Verificar conectividad a Artifactory
-- Revisar configuración de interfaces de red
+### Connectivity issues
+- Verify APT proxy is accessible
+- Verify Artifactory connectivity
+- Check network interface configuration
+- Test SSH connectivity: `ansible all -i inventory/hosts.yml -m ping`
 
-### Kube-vip no funciona
-- Verificar que la IP virtual esté disponible
-- Verificar que el interface DTH_INTERFACE exista
-- Revisar logs: `crictl logs <kube-vip-pod>`
+### Kube-vip not working
+- Verify virtual IP is available
+- Verify DTH_INTERFACE exists: `ip a show ens8`
+- Check logs: `crictl logs <kube-vip-pod>`
 
-## Arquitectura
+### General debugging
+```bash
+# Check what would be done
+./deploy.sh --check -v
 
-### Flujo de Ejecución
+# Run only preparation to isolate issues
+./deploy.sh --tags prep
 
-1. **Preparación** (todos los nodos):
-   - Configurar kernel modules y sysctl
-   - Instalar containerd desde Artifactory
-   - Instalar paquetes Kubernetes
-   - Configurar kube-vip (solo masters)
+# Check specific nodes
+./deploy.sh --limit caas-master-1 --check
+```
 
-2. **Inicialización** (primer master):
-   - Ejecutar `kubeadm init` con configuración HA
-   - Generar tokens automáticamente
-   - Configurar kube-vip para admin.conf
+## Architecture
 
-3. **Join Masters** (masters adicionales):
-   - Obtener tokens del primer master vía hostvars
-   - Ejecutar `kubeadm join` con `--control-plane`
+### Execution Flow
 
-4. **Join Workers** (si existen):
-   - Obtener tokens del primer master
-   - Ejecutar `kubeadm join` sin `--control-plane`
+1. **Preparation** (all nodes):
+   - Configure kernel modules and sysctl
+   - Install containerd from Artifactory
+   - Install Kubernetes packages
+   - Configure kube-vip (masters only)
 
-5. **Post-configuración** (todos):
-   - Configurar kubelet con node-ip específica
-   - Ajustar límites de archivos del sistema
+2. **Initialization** (first master):
+   - Execute `kubeadm init` with HA configuration
+   - Generate tokens automatically
+   - Configure kube-vip for admin.conf
 
-### Componentes Clave
+3. **Join Masters** (additional masters):
+   - Get tokens from first master via hostvars
+   - Execute `kubeadm join` with `--control-plane`
 
-- **kube-vip**: Proporciona HA para el API server con IP virtual
-- **containerd**: Runtime de contenedores con registry privado
-- **kubeadm**: Herramienta de bootstrap del cluster
-- **Tokens dinámicos**: Generación automática sin intervención manual
+4. **Join Workers** (if they exist):
+   - Get tokens from first master
+   - Execute `kubeadm join` without `--control-plane`
 
-## Customización
+5. **Post-configuration** (all nodes):
+   - Configure kubelet with specific node-ip
+   - Adjust system file limits
 
-### Cambiar versión de Kubernetes
+### Key Components
+
+- **kube-vip**: Provides HA for API server with virtual IP
+- **containerd**: Container runtime with private registry
+- **kubeadm**: Cluster bootstrap tool
+- **Dynamic tokens**: Automatic generation without manual intervention
+
+## Customization
+
+### Change Kubernetes Version
 
 ```bash
 export KUBE_VERSION="1.28.0-00"
 ```
 
-### Usar diferentes registries
+### Use Different Registries
 
-Edita los templates y tasks para cambiar:
-- `artifactory.devops.telekom.de` por tu registry
-- Ajustar autenticación según tu entorno
+Edit templates and tasks to change:
+- `artifactory.devops.telekom.de` to your registry
+- Adjust authentication according to your environment
 
-### Modificar configuración de red
+### Modify Network Configuration
 
-Edita `roles/k8s-master-init/templates/kubeadm-config.yaml.j2`:
+Edit `roles/k8s-master-init/templates/kubeadm-config.yaml.j2`:
 
 ```yaml
 networking:
-  podSubnet: "10.244.0.0/16"  # Cambiar subnet de pods
+  podSubnet: "10.244.0.0/16"  # Change pod subnet
 ```
 
-## Contribuir
+### Add Custom Configuration
 
-Para mejorar este playbook:
+You can extend roles or add new ones:
 
-1. Fork del repositorio
-2. Crear feature branch
-3. Testear cambios
-4. Crear pull request
+```bash
+# Add new role
+mkdir -p roles/custom-config/{tasks,templates}
 
-## Licencia
+# Reference in main playbook
+echo "  - custom-config" >> roles/k8s-prep/meta/main.yml
+```
 
-Este proyecto está basado en scripts internos y se proporciona tal como está para uso interno.
+## Security Considerations
+
+### Credentials Management
+- **Never commit** real credentials to version control
+- Use `ansible-vault` for sensitive data in production:
+  ```bash
+  ansible-vault encrypt_string 'your-secret' --name 'af_api_token'
+  ```
+- Clean up credentials immediately after installation
+
+### Network Security
+- Ensure virtual IP is properly allocated
+- Configure firewall rules for Kubernetes ports
+- Use secure network interfaces
+
+### File Permissions
+- Kubeconfig files have restricted permissions automatically
+- Certificate keys are cleaned up after use
+
+## Production Recommendations
+
+### Multiple Environments
+```bash
+# Different inventories for different environments
+inventory/
+├── dev.yml          # Development environment
+├── staging.yml      # Staging environment
+└── prod.yml         # Production environment
+
+# Use specific inventory
+./deploy.sh -i inventory/prod.yml
+```
+
+### Backup Strategy
+```bash
+# Before deployment, backup existing configs
+./deploy.sh --tags prep --extra-vars "backup_existing=true"
+```
+
+### Monitoring Deployment
+```bash
+# Monitor deployment progress
+watch -n 2 'ansible all -i inventory/hosts.yml -m shell -a "systemctl status kubelet" --one-line'
+```
+
+## Contributing
+
+To improve this playbook:
+
+1. Fork the repository
+2. Create a feature branch
+3. Test changes thoroughly
+4. Create a pull request
+
+### Testing Changes
+```bash
+# Test in development environment
+./deploy.sh -i inventory/dev.yml --check
+
+# Test specific roles
+./deploy.sh --tags prep --limit dev-master-1
+```
+
+## License
+
+This project is based on internal scripts and is provided as-is for internal use.
+
+## Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review Ansible and kubeadm logs
+3. Test with `--check` mode first
+4. Use verbose mode (`-v`) for detailed output

@@ -41,15 +41,22 @@
     regexp: '.*swap.*'
     state: absent
 
-# Configuración de repositorios y containerd
-- name: Add Kubernetes APT key from Artifactory
-  shell: |
-    curl -H "X-JFrog-Art-Api: {{ caas_sa_af_token }}" \
-      https://artifactory.devops.telekom.de/artifactory/tdi-caas-generic-local/mt-fehervari/apt-key.gpg | apt-key add -
+# Configuración de repositorios y containerd (ACTUALIZADO)
+- name: Create APT keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
 
-- name: Add Kubernetes repository
+- name: Add Kubernetes APT key from new Artifactory
+  shell: |
+    curl -fsSL https://artifactory.caas.in.pan-net.eu/repository/images/apt_keys/Release_1.32.key | \
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add new Kubernetes repository
   copy:
-    content: "deb https://apt.kubernetes.io/ kubernetes-xenial main"
+    content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://artifactory.caas.in.pan-net.eu/repository/kubernetes-v1-32/ /"
     dest: /etc/apt/sources.list.d/kubernetes.list
 
 - name: Configure APT proxy
@@ -63,7 +70,7 @@
   apt:
     update_cache: yes
 
-# Instalación de containerd
+# Instalación de containerd (mantiene URLs originales para containerd)
 - name: Download containerd archive
   get_url:
     url: "https://artifactory.devops.telekom.de/artifactory/tdi-caas-generic-local/mt-fehervari/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
@@ -84,7 +91,7 @@
     headers:
       X-JFrog-Art-Api: "{{ caas_sa_af_token }}"
 
-# Instalación de paquetes Kubernetes
+# Instalación de paquetes Kubernetes (ACTUALIZADO)
 - name: Install Kubernetes packages
   apt:
     name:
@@ -100,6 +107,13 @@
     allow_change_held_packages: yes
     allow_downgrade: yes
 
+- name: Reload systemd and enable containerd
+  systemd:
+    name: containerd
+    daemon_reload: yes
+    enabled: yes
+    state: started
+
 - name: Hold Kubernetes packages
   dpkg_selections:
     name: "{{ item }}"
@@ -110,14 +124,7 @@
     - kubectl
     - containerd
 
-- name: Reload systemd and enable containerd
-  systemd:
-    name: containerd
-    daemon_reload: yes
-    enabled: yes
-    state: started
-
-# Configuración de containerd
+# Configuración de containerd (ACTUALIZADO)
 - name: Create containerd config directory
   file:
     path: /etc/containerd
@@ -130,7 +137,7 @@
     dest: /etc/containerd/config.toml
   notify: restart containerd
 
-# Configurar kube-vip solo en masters
+# Configurar kube-vip solo en masters (ACTUALIZADO)
 - name: Check if kube-vip manifest exists
   stat:
     path: /etc/kubernetes/manifests/kube-vip.yaml
@@ -150,8 +157,8 @@
 
 - name: Pull kube-vip image
   shell: |
-    crictl --debug pull artifactory.devops.telekom.de/kube-vip/kube-vip:{{ kube_vip_version }}
-    ctr images pull artifactory.devops.telekom.de/kube-vip/kube-vip:{{ kube_vip_version }}
+    crictl --debug pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
+    ctr images pull artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }}
   when: 
     - inventory_hostname in groups['masters']
     - not kube_vip_manifest.stat.exists
@@ -166,7 +173,7 @@
 - name: Generate kube-vip manifest
   shell: |
     ctr --namespace k8s.io run --rm --net-host \
-      artifactory.devops.telekom.de/kube-vip/kube-vip:{{ kube_vip_version }} vip \
+      artifactory-virtual.caas.in.pan-net.eu/kube-vip/kube-vip:{{ kube_vip_version }} vip \
       /kube-vip manifest pod --arp --interface {{ dth_interface }} \
       --vip {{ k8s_api_ip }} --controlplane --leaderElection > /etc/kubernetes/manifests/kube-vip.yaml
   when: 
@@ -177,7 +184,7 @@
   replace:
     path: /etc/kubernetes/manifests/kube-vip.yaml
     regexp: 'ghcr.io'
-    replace: 'artifactory.devops.telekom.de'
+    replace: 'artifactory-virtual.caas.in.pan-net.eu'
   when: 
     - inventory_hostname in groups['masters']
     - not kube_vip_manifest.stat.exists

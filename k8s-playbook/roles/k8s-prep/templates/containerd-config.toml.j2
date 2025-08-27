@@ -1,6 +1,6 @@
 version = 2
 [plugins."io.containerd.grpc.v1.cri"]
-  sandbox_image = "artifactory.devops.telekom.de/registry.k8s.io/pause:{{ pause_version }}"
+  sandbox_image = "artifactory-virtual.caas.in.pan-net.eu/pause:{{ pause_version }}"
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
     runtime_type = "io.containerd.runc.v2"
     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
