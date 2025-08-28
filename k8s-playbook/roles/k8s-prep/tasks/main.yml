@@ -42,11 +42,46 @@
     state: absent
 
 
+- name: Configure APT proxy
+  copy:
+    content: |
+      Acquire::http::Proxy "http://{{ apt_proxy }}:8000";
+      Acquire::https::Proxy "http://{{ apt_proxy }}:8000";
+    dest: /etc/apt/apt.conf.d/proxy.conf
+
+- name: Create APT keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Check if GPG key exists and is valid
+  stat:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: gpg_key_exists
+
+- name: Remove potentially corrupted GPG key
+  file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: absent
+  when: gpg_key_exists.stat.exists and gpg_key_exists.stat.size == 0
+
+- name: Add Kubernetes APT key from new Artifactory
+  shell: |
+    curl -fsSL https://artifactory.caas.in.pan-net.eu/repository/images/apt_keys/Release_1.32.key | \
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  when: not gpg_key_exists.stat.exists or gpg_key_exists.stat.size == 0
+
+- name: Add new Kubernetes repository
+  copy:
+    content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://artifactory.caas.in.pan-net.eu/repository/kubernetes-v1-32/ /"
+    dest: /etc/apt/sources.list.d/kubernetes.list
+
 - name: Update package cache
   apt:
     update_cache: yes
 
-# Instalar paquetes básicos
 - name: Install Kubernetes packages
   apt:
     name:
@@ -65,21 +100,6 @@
     state: present
     allow_change_held_packages: yes
     allow_downgrade: yes
-
-- name: Add Kubernetes APT key from new Artifactory
-  shell: |
-    curl -fsSL https://artifactory.caas.in.pan-net.eu/repository/images/apt_keys/Release_1.32.key | \
-    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-- name: Add new Kubernetes repository
-  copy:
-    content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://artifactory.caas.in.pan-net.eu/repository/kubernetes-v1-32/ /"
-    dest: /etc/apt/sources.list.d/kubernetes.list
-
-- name: Update package cache after adding repository
-  apt:
-    update_cache: yes
 
 # Descargar e instalar containerd (sin autenticación como en tu script)
 - name: Download containerd archive
@@ -104,6 +124,18 @@
     daemon_reload: yes
     enabled: yes
     state: started
+    
+- name: Create containerd config directory
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Configure containerd
+  template:
+    src: containerd-config.toml.j2
+    dest: /etc/containerd/config.toml
+  notify: restart containerd
 
 # Configurar crictl
 - name: Configure crictl
@@ -123,7 +155,7 @@
     - kubelet
     - kubeadm
     - kubectl
-    - containerd
+    # - containerd
 
 # Configuración de logging para iptables-events
 - name: Configure rsyslog for iptables events
