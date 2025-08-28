@@ -19,6 +19,7 @@
     - 8021q
     - dm_snapshot
     - dm_thin_pool
+    
 
 - name: Configure sysctl for Kubernetes
   sysctl:
@@ -97,9 +98,36 @@
       - ebtables
       - conntrack
       - kubernetes-cni
+      - chrony
     state: present
     allow_change_held_packages: yes
     allow_downgrade: yes
+
+
+- name: Stop and disable conflicting time services
+  systemd:
+    name: "{{ item }}"
+    enabled: no
+    state: stopped
+  loop:
+    - ntp
+    - systemd-timesyncd
+  ignore_errors: true
+
+- name: Copy chrony configuration file
+  copy:
+    src: chrony.conf
+    dest: /etc/chrony/chrony.conf
+    mode: '0644'
+    backup: yes
+  notify: restart chrony
+
+- name: Enable and start chrony service
+  systemd:
+    name: chrony
+    enabled: yes
+    state: started
+    daemon_reload: yes
 
 # Descargar e instalar containerd (sin autenticación como en tu script)
 - name: Download containerd archive
@@ -124,7 +152,7 @@
     daemon_reload: yes
     enabled: yes
     state: started
-    
+
 - name: Create containerd config directory
   file:
     path: /etc/containerd

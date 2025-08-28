@@ -64,26 +64,29 @@
     replace: 'path: /etc/kubernetes/admin.conf'
   when: not k8s_admin_conf.stat.exists
 
-- name: Generate bootstrap token
-  shell: kubeadm token create
-  register: bootstrap_token
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
+- name: Generate bootstrap join command
+  shell: kubeadm token create --print-join-command --certificate-key $(kubeadm certs certificate-key)
+  register: bootstrap
+  changed_when: false
+  run_once: true
 
-- name: Get discovery token hash
+- name: Upload certs and capture ONLY the certificate key
   shell: |
-    openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | \
-    openssl dgst -sha256 -hex | sed 's/^.* /sha256:/'
-  register: discovery_token_hash
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
+    kubeadm init phase upload-certs --certificate-key $(kubeadm certs certificate-key) --upload-certs \
+    | awk '/Using certificate key/{getline;print;exit}'
+  register: new_cert
+  changed_when: false
+  run_once: true
 
-- name: Generate certificate key for joining masters
-  shell: kubeadm certs certificate-key
-  register: certificate_key
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
-
-- name: Upload certificates with generated key
-  shell: kubeadm init phase upload-certs --certificate-key {{ certificate_key.stdout }}
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
+- name: Extract pieces from the original join command
+  set_fact:
+    join_token: "{{ (bootstrap.stdout | regex_findall('--token\\s+(\\S+)'))[0] }}"
+    join_discovery_hash: "{{ (bootstrap.stdout | regex_findall('--discovery-token-ca-cert-hash\\s+(\\S+)'))[0] }}"
+    join_cert_key: "{{ new_cert.stdout | trim }}"
+    final_join_command: >-
+      {{ (bootstrap.stdout | regex_replace('--certificate-key\\s+\\S+',
+                                            '--certificate-key ' ~ (new_cert.stdout | trim))) }}
+  run_once: true
 
 - name: Enable kube-vip leader election after init
   replace:
@@ -92,26 +95,37 @@
     replace: 'name: vip_leaderelection\n      value: "true"'
   when: not k8s_admin_conf.stat.exists and kubeadm_init_result is defined
 
-- name: Set join tokens as facts
-  set_fact:
-    kubeadm_token: "{{ bootstrap_token.stdout }}"
-    kubeadm_discovery_token: "{{ discovery_token_hash.stdout }}"
-    kubeadm_cert_key: "{{ certificate_key.stdout }}"
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
+# - name: Set join tokens as facts
+#   set_fact:
+#     kubeadm_token: "{{ bootstrap_token.stdout }}"
+#     kubeadm_discovery_token: "{{ discovery_token_hash.stdout }}"
+#     kubeadm_cert_key: "{{ certificate_key.stdout }}"
+#   # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
 
-- name: Display kubeadm init output
-  debug:
-    var: kubeadm_init_result.stdout_lines
-  when: 
-    - not k8s_admin_conf.stat.exists
-    - kubeadm_init_result is defined
+# - name: Display kubeadm init output
+#   debug:
+#     var: kubeadm_init_result.stdout_lines
+#   when: 
+#     - not k8s_admin_conf.stat.exists
+#     - kubeadm_init_result is defined
+
+# - name: Display generated tokens
+#   debug:
+#     msg:
+#       - "Bootstrap token: {{ kubeadm_token }}"
+#       - "Discovery token: {{ kubeadm_discovery_token }}"
+#       - "Certificate key: {{ kubeadm_cert_key }}"
+#       - "IMPORTANT: CoreDNS and kube-proxy phases were skipped"
+#       - "You'll need to install these components separately"
+#   # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
 
 - name: Display generated tokens
   debug:
     msg:
-      - "Bootstrap token: {{ kubeadm_token }}"
-      - "Discovery token: {{ kubeadm_discovery_token }}"
-      - "Certificate key: {{ kubeadm_cert_key }}"
+      - "Bootstrap token: {{ join_token }}"
+      - "Discovery token: {{ join_discovery_hash }}"
+      - "Certificate key: {{ join_cert_key }}"
+      - "Final join command: {{ final_join_command }}"
       - "IMPORTANT: CoreDNS and kube-proxy phases were skipped"
       - "You'll need to install these components separately"
   # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined

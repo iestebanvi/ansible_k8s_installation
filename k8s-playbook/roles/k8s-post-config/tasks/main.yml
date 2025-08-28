@@ -31,7 +31,7 @@
     backup: yes
   notify:
     - reload systemd
-    - restart 
+    - restart kubelet
 
 - name: Configure file limits
   copy:
