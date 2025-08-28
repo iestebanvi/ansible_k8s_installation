@@ -8,7 +8,8 @@
   debug:
     msg:
       - "Token: {{ hostvars[groups['masters'][0]]['kubeadm_token'] }}"
-      - "Discovery: {{ hostvars[groups['masters'][0]]['kubeadm_discovery_token'] }}"
+      - "Discovery: {{ hostvars[groups['masters'][0]]['kubeadm_discovery_hash'] }}"
+  when: not kubelet_conf.stat.exists
 
 - name: Join worker to cluster
   shell: |
@@ -16,5 +17,5 @@
       --ignore-preflight-errors=DirAvailable--etc-kubernetes-manifests \
       {{ k8s_api_ip }}:6443 \
       --token "{{ hostvars[groups['masters'][0]]['kubeadm_token'] }}" \
-      --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]]['kubeadm_discovery_token'] }}"
+      --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]]['kubeadm_discovery_hash'] }}"
   when: not kubelet_conf.stat.exists

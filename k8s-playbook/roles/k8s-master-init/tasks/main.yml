@@ -26,7 +26,7 @@
         --controlplane \
         --leaderElection > /etc/kubernetes/manifests/kube-vip.yaml
 
-- name: Fix kube-vip admin.conf path after init
+- name: Fix kube-vip admin.conf path for initialization
   replace:
     path: /etc/kubernetes/manifests/kube-vip.yaml
     regexp: 'path: /etc/kubernetes/admin.conf'
@@ -64,68 +64,30 @@
     replace: 'path: /etc/kubernetes/admin.conf'
   when: not k8s_admin_conf.stat.exists
 
-- name: Generate bootstrap join command
-  shell: kubeadm token create --print-join-command --certificate-key $(kubeadm certs certificate-key)
-  register: bootstrap
+# SIMPLE TOKEN GENERATION (matching bash script order)
+- name: Generate certificate key
+  shell: kubeadm certs certificate-key
+  register: cert_key
   changed_when: false
-  run_once: true
 
-- name: Upload certs and capture ONLY the certificate key
-  shell: |
-    kubeadm init phase upload-certs --certificate-key $(kubeadm certs certificate-key) --upload-certs \
-    | awk '/Using certificate key/{getline;print;exit}'
-  register: new_cert
+- name: Generate master join command (first, like in bash script)
+  shell: kubeadm token create --print-join-command --certificate-key {{ cert_key.stdout }}
+  register: master_join_cmd
   changed_when: false
-  run_once: true
 
-- name: Extract pieces from the original join command
+- name: Upload certificates (second, like in bash script)
+  shell: kubeadm init phase upload-certs --certificate-key {{ cert_key.stdout }} --upload-certs
+  changed_when: false
+
+- name: Set join facts
   set_fact:
-    join_token: "{{ (bootstrap.stdout | regex_findall('--token\\s+(\\S+)'))[0] }}"
-    join_discovery_hash: "{{ (bootstrap.stdout | regex_findall('--discovery-token-ca-cert-hash\\s+(\\S+)'))[0] }}"
-    join_cert_key: "{{ new_cert.stdout | trim }}"
-    final_join_command: >-
-      {{ (bootstrap.stdout | regex_replace('--certificate-key\\s+\\S+',
-                                            '--certificate-key ' ~ (new_cert.stdout | trim))) }}
-  run_once: true
+    kubeadm_token: "{{ (master_join_cmd.stdout | regex_search('--token\\s+(\\S+)', '\\1'))[0] }}"
+    kubeadm_discovery_hash: "{{ (master_join_cmd.stdout | regex_search('--discovery-token-ca-cert-hash\\s+(\\S+)', '\\1'))[0] }}"
+    kubeadm_cert_key: "{{ cert_key.stdout }}"
 
-- name: Enable kube-vip leader election after init
-  replace:
-    path: /etc/kubernetes/manifests/kube-vip.yaml
-    regexp: 'name: vip_leaderelection\n\s+value: "false"'
-    replace: 'name: vip_leaderelection\n      value: "true"'
-  when: not k8s_admin_conf.stat.exists and kubeadm_init_result is defined
-
-# - name: Set join tokens as facts
-#   set_fact:
-#     kubeadm_token: "{{ bootstrap_token.stdout }}"
-#     kubeadm_discovery_token: "{{ discovery_token_hash.stdout }}"
-#     kubeadm_cert_key: "{{ certificate_key.stdout }}"
-#   # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
-
-# - name: Display kubeadm init output
-#   debug:
-#     var: kubeadm_init_result.stdout_lines
-#   when: 
-#     - not k8s_admin_conf.stat.exists
-#     - kubeadm_init_result is defined
-
-# - name: Display generated tokens
-#   debug:
-#     msg:
-#       - "Bootstrap token: {{ kubeadm_token }}"
-#       - "Discovery token: {{ kubeadm_discovery_token }}"
-#       - "Certificate key: {{ kubeadm_cert_key }}"
-#       - "IMPORTANT: CoreDNS and kube-proxy phases were skipped"
-#       - "You'll need to install these components separately"
-#   # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
-
-- name: Display generated tokens
+- name: Display join information
   debug:
     msg:
-      - "Bootstrap token: {{ join_token }}"
-      - "Discovery token: {{ join_discovery_hash }}"
-      - "Certificate key: {{ join_cert_key }}"
-      - "Final join command: {{ final_join_command }}"
-      - "IMPORTANT: CoreDNS and kube-proxy phases were skipped"
-      - "You'll need to install these components separately"
-  # when: k8s_admin_conf.stat.exists or kubeadm_init_result is defined
+      - "Token: {{ kubeadm_token }}"
+      - "Discovery Hash: {{ kubeadm_discovery_hash }}"
+      - "Certificate Key: {{ kubeadm_cert_key }}"

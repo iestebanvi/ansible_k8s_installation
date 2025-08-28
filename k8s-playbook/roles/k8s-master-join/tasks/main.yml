@@ -4,21 +4,20 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
-- name: Wait for first master to generate tokens
-  wait_for:
-    timeout: 30
-  delegate_to: localhost
-
-
-
-- name: Join additional master to cluster (using parts)
-  shell: |
-    kubeadm join \
-      --ignore-preflight-errors=DirAvailable--etc-kubernetes-manifests \
-      {{ k8s_api_ip }}:6443 \
-      --control-plane \
-      --token "{{ hostvars[groups['masters'][0]].join_token }}" \
-      --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]].join_discovery_hash }}" \
-      --certificate-key "{{ hostvars[groups['masters'][0]].join_cert_key }}"
+- name: Debug tokens from first master
+  debug:
+    msg:
+      - "Token: {{ hostvars[groups['masters'][0]]['kubeadm_token'] }}"
+      - "Discovery: {{ hostvars[groups['masters'][0]]['kubeadm_discovery_hash'] }}"
+      - "Certificate Key: {{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}"
   when: not kubelet_conf.stat.exists
-  
+
+- name: Join master to cluster
+  shell: |
+    kubeadm join {{ k8s_api_ip }}:6443 \
+      --ignore-preflight-errors=DirAvailable--etc-kubernetes-manifests \
+      --control-plane \
+      --token "{{ hostvars[groups['masters'][0]]['kubeadm_token'] }}" \
+      --discovery-token-ca-cert-hash "{{ hostvars[groups['masters'][0]]['kubeadm_discovery_hash'] }}" \
+      --certificate-key "{{ hostvars[groups['masters'][0]]['kubeadm_cert_key'] }}"
+  when: not kubelet_conf.stat.exists

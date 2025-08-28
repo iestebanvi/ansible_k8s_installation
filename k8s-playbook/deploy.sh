@@ -18,6 +18,7 @@ OPTIONS:
     --tags TAG1,TAG2           Ejecutar solo las tareas con los tags especificados
     --skip-tags TAG1,TAG2      Saltar las tareas con los tags especificados
     --limit HOST_PATTERN       Ejecutar solo en los hosts que coincidan con el patrón
+    -i, --inventory FILE       Usar inventario específico (sobrescribe INVENTORY_FILE)
     -v, -vv, -vvv             Modo verbose (1-3 niveles)
     --help, -h                 Mostrar esta ayuda
 
@@ -34,23 +35,11 @@ EJEMPLOS:
     # Dry-run completo
     ./deploy.sh --check
 
-    # Dry-run solo preparación
-    ./deploy.sh --check --tags prep
+    # Usar inventario específico
+    ./deploy.sh -i inventory/hosts-no-workers.yml
 
     # Solo preparación del sistema
     ./deploy.sh --tags prep
-
-    # Solo inicializar primer master
-    ./deploy.sh --tags master-init
-
-    # Solo hacer join (masters + workers)
-    ./deploy.sh --tags join
-
-    # Ejecutar todo excepto preparación
-    ./deploy.sh --skip-tags prep
-
-    # Solo en masters con verbose
-    ./deploy.sh --limit masters -v
 
     # Despliegue por fases (recomendado para primer uso):
     ./deploy.sh --check --tags prep     # 1. Verificar preparación
@@ -59,6 +48,11 @@ EJEMPLOS:
     ./deploy.sh --tags master-join      # 4. Añadir masters
     ./deploy.sh --tags worker-join      # 5. Añadir workers
     ./deploy.sh --tags post-config      # 6. Configuración final
+
+INVENTARIOS:
+    inventory/hosts.yml                 - Configuración actual
+    inventory/hosts-no-workers.yml      - Solo masters (sin workers)
+    inventory/hosts-with-workers.yml    - Masters + workers
 
 EOF
 }
@@ -80,6 +74,7 @@ fi
 : ${DTH_INTERFACE:="ens7"}
 : ${HOST_INTERFACE:="ens4"}
 : ${ANSIBLE_SSH_USER:="ubuntu"}
+: ${INVENTORY_FILE:="inventory/hosts.yml"}
 
 # Variables que SÍ necesitan ser definidas obligatoriamente
 REQUIRED_VARS=(
@@ -93,21 +88,41 @@ REQUIRED_VARS=(
 # CAAS_SA_AF_TOKEN se establece automáticamente igual que AF_API_TOKEN
 : ${CAAS_SA_AF_TOKEN:="$AF_API_TOKEN"}
 
-# Variables opcionales con valores por defecto (para información)
-DEFAULT_VARS=(
-    "AF_USERNAME"
-    "KUBE_VERSION"
-    "KUBE_VIP_VERSION"
-    "CONTAINERD_VERSION"
-    "CRI_TOOLS_VERSION"
-    "PAUSE_VERSION"
-    "CNI_PLUGIN_VERSION"
-    "DTH_INTERFACE"
-    "HOST_INTERFACE"
-)
+# Procesar argumentos para detectar inventario personalizado
+CUSTOM_INVENTORY=""
+ANSIBLE_ARGS=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--inventory)
+            CUSTOM_INVENTORY="$2"
+            shift 2
+            ;;
+        *)
+            ANSIBLE_ARGS="$ANSIBLE_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+# Determinar qué inventario usar
+if [[ -n "$CUSTOM_INVENTORY" ]]; then
+    FINAL_INVENTORY="$CUSTOM_INVENTORY"
+else
+    FINAL_INVENTORY="$INVENTORY_FILE"
+fi
+
+# Verificar que el inventario existe
+if [[ ! -f "$FINAL_INVENTORY" ]]; then
+    echo "❌ Error: El archivo de inventario no existe: $FINAL_INVENTORY"
+    echo ""
+    echo "💡 Inventarios disponibles:"
+    find inventory/ -name "*.yml" 2>/dev/null | sed 's/^/   - /' || echo "   - inventory/hosts.yml (crear desde ejemplo)"
+    exit 1
+fi
 
 # Verificar variables solo si no se están listando los tags o pidiendo ayuda
-if [[ ! "$*" =~ --list-tags ]] && [[ ! "$*" =~ --help ]]; then
+if [[ ! "$ANSIBLE_ARGS" =~ --list-tags ]] && [[ ! "$ANSIBLE_ARGS" =~ --help ]]; then
     missing_vars=()
     for var in "${REQUIRED_VARS[@]}"; do
         if [ -z "${!var}" ]; then
@@ -133,19 +148,19 @@ fi
 # Detectar el tipo de ejecución basado en los argumentos
 check_mode=""
 tags_info=""
-if [[ "$*" =~ --check ]]; then
+if [[ "$ANSIBLE_ARGS" =~ --check ]]; then
     check_mode=" (DRY-RUN - NO CHANGES)"
 fi
 
-if [[ "$*" =~ --tags ]]; then
+if [[ "$ANSIBLE_ARGS" =~ --tags ]]; then
     # Extraer los tags del comando
-    tags_arg=$(echo "$*" | grep -o -- '--tags [^[:space:]]*' | cut -d' ' -f2)
+    tags_arg=$(echo "$ANSIBLE_ARGS" | grep -o -- '--tags [^[:space:]]*' | cut -d' ' -f2)
     tags_info=" - Tags: $tags_arg"
 fi
 
-if [[ "$*" =~ --skip-tags ]]; then
+if [[ "$ANSIBLE_ARGS" =~ --skip-tags ]]; then
     # Extraer los tags del comando
-    skip_tags_arg=$(echo "$*" | grep -o -- '--skip-tags [^[:space:]]*' | cut -d' ' -f2)
+    skip_tags_arg=$(echo "$ANSIBLE_ARGS" | grep -o -- '--skip-tags [^[:space:]]*' | cut -d' ' -f2)
     tags_info="$tags_info - Skip Tags: $skip_tags_arg"
 fi
 
@@ -154,6 +169,7 @@ if [ ${#missing_vars[@]} -eq 0 ]; then
     echo "============================================="
     echo "🚀 Kubernetes Cluster Deployment$check_mode"
     echo "============================================="
+    echo "📂 Inventario: $FINAL_INVENTORY"
     echo "📍 API IP: $K8S_API_IP"
     echo "🔌 DTH Interface: $DTH_INTERFACE"
     echo "🖥️  Host Interface: $HOST_INTERFACE"
@@ -171,9 +187,9 @@ if [ ${#missing_vars[@]} -eq 0 ]; then
 fi
 
 # Verificar conectividad a los hosts antes de empezar (solo en ejecuciones reales)
-if [[ ! "$*" =~ --check ]] && [[ ! "$*" =~ --tags.*(prep|preparation) ]] || [[ "$*" =~ --tags.*prep.* ]]; then
+if [[ ! "$ANSIBLE_ARGS" =~ --check ]] && [[ ! "$ANSIBLE_ARGS" =~ --tags.*(prep|preparation) ]] || [[ "$ANSIBLE_ARGS" =~ --tags.*prep.* ]]; then
     echo "🔍 Verificando conectividad a los hosts..."
-    if ! ansible all -i inventory/hosts.yml -m ping --one-line >/dev/null 2>&1; then
+    if ! ansible all -i "$FINAL_INVENTORY" -m ping --one-line >/dev/null 2>&1; then
         echo "⚠️  Advertencia: Algunos hosts no son accesibles"
         echo "   Verifica el inventory y la conectividad SSH"
         echo ""
@@ -184,10 +200,10 @@ if [[ ! "$*" =~ --check ]] && [[ ! "$*" =~ --tags.*(prep|preparation) ]] || [[ "
 fi
 
 # Ejecutar playbook con todas las variables
-echo "▶️  Ejecutando ansible-playbook..."
+echo "▶️  Ejecutando ansible-playbook con inventario: $FINAL_INVENTORY"
 echo ""
 
-ansible-playbook -i inventory/hosts.yml k8s-cluster.yml \
+ansible-playbook -i "$FINAL_INVENTORY" k8s-cluster.yml \
   -e af_username="$AF_USERNAME" \
   -e af_api_token="$AF_API_TOKEN" \
   -e caas_sa_af_token="$CAAS_SA_AF_TOKEN" \
@@ -202,10 +218,10 @@ ansible-playbook -i inventory/hosts.yml k8s-cluster.yml \
   -e pause_version="$PAUSE_VERSION" \
   -e cni_plugin_version="$CNI_PLUGIN_VERSION" \
   -e ansible_ssh_user="$ANSIBLE_SSH_USER" \
-  "$@"
+  $ANSIBLE_ARGS
 
 echo ""
-if [[ "$*" =~ --check ]]; then
+if [[ "$ANSIBLE_ARGS" =~ --check ]]; then
     echo "============================================="
     echo "✅ Dry-run completado!"
     echo "============================================="
@@ -219,12 +235,12 @@ else
     echo ""
     
     # Mostrar próximos pasos según lo que se ejecutó
-    if [[ "$*" =~ --tags.*prep ]] || [[ -z "$tags_info" ]]; then
+    if [[ "$ANSIBLE_ARGS" =~ --tags.*prep ]] || [[ -z "$tags_info" ]]; then
         echo "📋 Próximos pasos recomendados:"
-        if [[ "$*" =~ --tags.*prep ]]; then
+        if [[ "$ANSIBLE_ARGS" =~ --tags.*prep ]]; then
             echo "   ./deploy.sh --tags master-init    # Inicializar cluster"
         elif [[ -z "$tags_info" ]]; then
-            echo "   ssh caas-master-1 'kubectl get nodes'  # Verificar cluster"
+            echo "   ssh $(grep -A1 'caas-master-1:' $FINAL_INVENTORY | grep ansible_host | awk '{print $2}') 'kubectl get nodes'  # Verificar cluster"
             echo "   # Instalar CNI plugin (cluster quedará NotReady sin él)"
         fi
         echo ""
@@ -235,7 +251,7 @@ else
     echo "   - /etc/containerd/config.toml en todos los nodos"
     echo ""
     
-    if [[ ! "$*" =~ --tags ]] || [[ "$*" =~ --tags.*(config|finalize) ]]; then
+    if [[ ! "$ANSIBLE_ARGS" =~ --tags ]] || [[ "$ANSIBLE_ARGS" =~ --tags.*(config|finalize) ]]; then
         echo "🔍 Para verificar el cluster:"
         echo "   kubectl get nodes"
         echo "   kubectl get pods -A"
