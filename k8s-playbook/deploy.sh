@@ -227,6 +227,11 @@ REQUIRED_VARS=(
     "HOST_INTERFACE"
 )
 
+# Variables that are OPTIONAL
+OPTIONAL_VARS=(
+    "OAM_FIP_IP"
+)
+
 # CAAS_SA_AF_TOKEN is automatically set equal to AF_API_TOKEN
 : ${CAAS_SA_AF_TOKEN:="$AF_API_TOKEN"}
 
@@ -326,6 +331,9 @@ if [ ${#missing_vars[@]} -eq 0 ]; then
     echo "👤 SSH User: $ANSIBLE_SSH_USER"
     echo "🏢 Artifactory User: $AF_USERNAME"
     echo "🌐 APT Proxy: $APT_PROXY"
+    if [[ -n "$OAM_FIP_IP" ]]; then
+        echo "🔗 OAM FIP: $OAM_FIP_IP"
+    fi
     if [[ -n "$tags_info" ]]; then
         echo "🏷️ Execution$tags_info"
     fi
@@ -355,6 +363,29 @@ if [ ${#missing_vars[@]} -eq 0 ]; then
     fi
 fi
 
+# Prepare extra variables for ansible-playbook
+EXTRA_VARS=(
+  "-e af_username=$AF_USERNAME"
+  "-e af_api_token=$AF_API_TOKEN"
+  "-e caas_sa_af_token=$CAAS_SA_AF_TOKEN"
+  "-e kube_version=$KUBE_VERSION"
+  "-e kube_vip_version=$KUBE_VIP_VERSION"
+  "-e k8s_api_ip=$K8S_API_IP"
+  "-e dth_interface=$DTH_INTERFACE"
+  "-e host_interface=$HOST_INTERFACE"
+  "-e apt_proxy=$APT_PROXY"
+  "-e containerd_version=$CONTAINERD_VERSION"
+  "-e cri_tools_version=$CRI_TOOLS_VERSION"
+  "-e pause_version=$PAUSE_VERSION"
+  "-e cni_plugin_version=$CNI_PLUGIN_VERSION"
+  "-e ansible_ssh_user=$ANSIBLE_SSH_USER"
+)
+
+# Add optional variables if they are defined
+if [[ -n "$OAM_FIP_IP" ]]; then
+    EXTRA_VARS+=("-e oam_fip_ip=$OAM_FIP_IP")
+fi
+
 # Execute playbook with all variables
 echo "============================================="
 echo "▶️  EXECUTING ANSIBLE-PLAYBOOK"
@@ -368,20 +399,7 @@ echo "============================================="
 echo ""
 
 ansible-playbook -i "$FINAL_INVENTORY" k8s-cluster.yml \
-  -e af_username="$AF_USERNAME" \
-  -e af_api_token="$AF_API_TOKEN" \
-  -e caas_sa_af_token="$CAAS_SA_AF_TOKEN" \
-  -e kube_version="$KUBE_VERSION" \
-  -e kube_vip_version="$KUBE_VIP_VERSION" \
-  -e k8s_api_ip="$K8S_API_IP" \
-  -e dth_interface="$DTH_INTERFACE" \
-  -e host_interface="$HOST_INTERFACE" \
-  -e apt_proxy="$APT_PROXY" \
-  -e containerd_version="$CONTAINERD_VERSION" \
-  -e cri_tools_version="$CRI_TOOLS_VERSION" \
-  -e pause_version="$PAUSE_VERSION" \
-  -e cni_plugin_version="$CNI_PLUGIN_VERSION" \
-  -e ansible_ssh_user="$ANSIBLE_SSH_USER" \
+  "${EXTRA_VARS[@]}" \
   $ANSIBLE_ARGS
 
 echo ""
@@ -406,6 +424,9 @@ else
         elif [[ -z "$tags_info" ]]; then
             echo "   ssh $(grep -A1 'caas-master-1:' $FINAL_INVENTORY | grep ansible_host | awk '{print $2}') 'kubectl get nodes'  # Verify cluster"
             echo "   # Install CNI plugin (cluster will remain NotReady without it)"
+            if [[ -n "$OAM_FIP_IP" ]]; then
+                echo "   # MetalLB OAM configured with IP: $OAM_FIP_IP"
+            fi
         fi
         echo ""
     fi
@@ -419,6 +440,10 @@ else
         echo "🔍 To verify the cluster:"
         echo "   kubectl get nodes"
         echo "   kubectl get pods -A"
+        if [[ -n "$OAM_FIP_IP" ]]; then
+            echo "   kubectl get ipaddresspools -n kube-system"
+            echo "   kubectl get l2advertisements -n kube-system"
+        fi
         echo ""
     fi
 fi
