@@ -45,3 +45,19 @@
       fs.inotify.max_user_instances = 256
     dest: /etc/sysctl.d/90-caas-file-limits.conf
   notify: reload sysctl
+
+# Remove master taints if no workers are configured
+- name: Check if workers group is empty
+  set_fact:
+    workers_empty: "{{ groups['workers'] | length == 0 or groups.get('workers', {}).get('hosts', {}) | length == 0 }}"
+  run_once: true
+  delegate_to: "{{ groups['masters'][0] }}"
+
+- name: Remove control-plane taint when no workers configured
+  shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- || true
+  when: 
+    - workers_empty | bool
+    - inventory_hostname == groups['masters'][0]  # Only run once from first master with --all
+  ignore_errors: true
