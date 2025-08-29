@@ -12,6 +12,7 @@ This playbook automates the installation of a high-availability Kubernetes clust
 - **Phase-based execution** with tags for granular control
 - **Dry-run support** for safe testing
 - **Default values** for common variables to simplify configuration
+- **Multiple inventory support** for different environments
 
 ## Project Structure
 
@@ -21,7 +22,9 @@ k8s-playbook/
 ├── deploy.sh                    # Deployment script
 ├── set-vars-example.sh          # Environment variables example
 ├── inventory/
-│   └── hosts.yml               # Host inventory
+│   ├── hosts.yml               # Default host inventory
+│   ├── hosts-no-workers.yml    # Masters only (no workers)
+│   └── hosts-with-workers.yml  # Masters + workers
 └── roles/
     ├── k8s-prep/               # System preparation and packages
     ├── k8s-master-init/        # First master initialization
@@ -69,33 +72,47 @@ source set-vars.sh
 ```bash
 # Credentials (delete after installation)
 AF_API_TOKEN="password_of_sa_tdi-caas"
-CAAS_SA_AF_TOKEN="token_of_sa_tdi-caas"
 
 # Infrastructure
 K8S_API_IP="10.0.1.100"       # Virtual IP for API server
 APT_PROXY="10.0.1.50"         # Proxy server IP
+DTH_INTERFACE="ens7"           # Interface for kube-vip (updated default)
+HOST_INTERFACE="ens4"          # Main host interface
 ```
 
 ### Variables with Default Values (optional to override):
 
 ```bash
-# User (default: sa_tdi-caas)
-AF_USERNAME="sa_tdi-caas"
+# User (updated default)
+AF_USERNAME="sa_tdi-caas-r"
 
-# Versions (default: stable versions)
-KUBE_VERSION="1.27.5-00"
-CONTAINERD_VERSION="1.7.13"
+# Versions (updated defaults)
+KUBE_VERSION="1.32.2-1.1"
+CRI_TOOLS_VERSION="1.32.0-1.1"
+CONTAINERD_VERSION="1.7.22"
 KUBE_VIP_VERSION="v0.6.4"
-CRI_TOOLS_VERSION="1.26.0-00"
-PAUSE_VERSION="3.9"
+PAUSE_VERSION="3.10"
 CNI_PLUGIN_VERSION="v1.4.0"
 
-# Network interfaces (default: ens8/ens4)
-DTH_INTERFACE="ens8"          # Interface for kube-vip
-HOST_INTERFACE="ens4"         # Main host interface
+# SSH and Inventory
+ANSIBLE_SSH_USER="ubuntu"
 ```
 
 ## Usage
+
+### Script Options
+
+The `deploy.sh` script supports the following options:
+
+| Option | Description |
+|--------|-------------|
+| `--check` | Run in dry-run mode (no changes applied) |
+| `--tags TAG1,TAG2` | Execute only tasks with specified tags |
+| `--skip-tags TAG1,TAG2` | Skip tasks with specified tags |
+| `--limit HOST_PATTERN` | Execute only on hosts matching the pattern |
+| `-i, --inventory FILE` | Use specific inventory file |
+| `-v, -vv, -vvv` | Verbose mode (1-3 levels of verbosity) |
+| `--help, -h` | Show help message |
 
 ### Quick Start (Recommended)
 
@@ -142,26 +159,29 @@ source set-vars.sh
 
 ### Available Tags
 
-| Tag | Description |
-|-----|-------------|
-| `prep`, `preparation`, `system` | System preparation and packages |
-| `master-init`, `init`, `cluster-init` | Cluster initialization |
-| `master-join`, `masters` | Join additional masters |
-| `worker-join`, `workers` | Join workers |
-| `join` | All joins (masters + workers) |
-| `post-config`, `config`, `finalize` | Final configuration |
+| Tag | Aliases | Description |
+|-----|---------|-------------|
+| `prep` | `preparation`, `system` | System preparation and packages |
+| `master-init` | `init`, `cluster-init` | First master initialization |
+| `master-join` | `masters` | Join additional masters |
+| `worker-join` | `workers` | Join workers |
+| `join` | | All joins (masters + workers) |
+| `post-config` | `config`, `finalize` | Post-installation configuration |
 
-### Advanced Options
+### Advanced Usage Examples
 
 ```bash
 # Help and available options
 ./deploy.sh --help
 
-# Dry-run (no changes applied)
+# Complete dry-run
 ./deploy.sh --check
 
 # Dry-run specific phase
 ./deploy.sh --check --tags prep
+
+# Use specific inventory
+./deploy.sh -i inventory/hosts-no-workers.yml
 
 # Skip certain phases
 ./deploy.sh --skip-tags prep
@@ -169,11 +189,25 @@ source set-vars.sh
 # Execute only on specific hosts
 ./deploy.sh --limit masters
 
-# Verbose mode
-./deploy.sh -v    # or -vv, -vvv for more detail
+# Execute only on masters with verbose output
+./deploy.sh --limit masters -v
 
-# Combine options
+# Verbose mode (increasing detail levels)
+./deploy.sh -v      # Basic verbose
+./deploy.sh -vv     # More verbose
+./deploy.sh -vvv    # Maximum verbose
+
+# Combine multiple options
 ./deploy.sh --check --tags join --limit masters -v
+
+# Deploy only preparation phase with custom inventory
+./deploy.sh -i inventory/hosts-prod.yml --tags prep
+
+# Deploy everything except preparation
+./deploy.sh --skip-tags prep
+
+# Deploy with different verbosity levels for debugging
+./deploy.sh --check --tags master-init -vvv
 ```
 
 ### Deployment Scenarios
@@ -185,18 +219,28 @@ source set-vars.sh
 ```
 
 #### Masters Only (no workers)
-1. Edit `inventory/hosts.yml` and leave `workers` group empty
-2. Masters will automatically function as workers
-
 ```bash
-source set-vars.sh
-./deploy.sh
+# Use the specific inventory or edit hosts.yml to leave workers empty
+./deploy.sh -i inventory/hosts-no-workers.yml
+# Masters will automatically function as workers
 ```
 
 #### Add workers to existing cluster
 ```bash
 # Only join workers to existing cluster
 ./deploy.sh --tags worker-join
+```
+
+#### Multi-environment deployments
+```bash
+# Development environment
+./deploy.sh -i inventory/hosts-dev.yml
+
+# Staging environment
+./deploy.sh -i inventory/hosts-staging.yml --check
+
+# Production environment
+./deploy.sh -i inventory/hosts-prod.yml --tags prep
 ```
 
 ## Post-Installation
@@ -252,28 +296,61 @@ kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 
 ## Troubleshooting
 
-### Nodes are in NotReady state
+### Common Issues and Solutions
+
+#### Variables not found error
+```bash
+❌ Error: The following variables are not defined:
+   - AF_API_TOKEN
+   - K8S_API_IP
+   - APT_PROXY
+```
+
+**Solution**: Make sure to use `source` instead of just executing the script:
+```bash
+# Wrong way
+./set-vars.sh
+
+# Correct way
+source ./set-vars.sh
+# or
+. ./set-vars.sh
+```
+
+#### Inventory file not found
+```bash
+❌ Error: Inventory file does not exist: inventory/hosts-custom.yml
+```
+
+**Solution**: Check available inventories:
+```bash
+ls inventory/*.yml
+./deploy.sh --help  # See available inventories
+```
+
+#### Nodes are in NotReady state
 - Verify containerd is running: `systemctl status containerd`
 - Install a CNI plugin
 - Check logs: `journalctl -u kubelet -f`
 
-### Token errors
+#### Token errors
 - Tokens are generated automatically
 - If there are issues, check first master logs: `journalctl -u kubeadm`
 - You can regenerate tokens: `kubeadm token create --print-join-command`
 
-### Connectivity issues
+#### Connectivity issues
 - Verify APT proxy is accessible
 - Verify Artifactory connectivity
 - Check network interface configuration
 - Test SSH connectivity: `ansible all -i inventory/hosts.yml -m ping`
 
-### Kube-vip not working
+#### Kube-vip not working
 - Verify virtual IP is available
-- Verify DTH_INTERFACE exists: `ip a show ens8`
+- Verify DTH_INTERFACE exists: `ip a show ens7`
 - Check logs: `crictl logs <kube-vip-pod>`
 
 ### General debugging
+
 ```bash
 # Check what would be done
 ./deploy.sh --check -v
@@ -283,6 +360,12 @@ kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 
 # Check specific nodes
 ./deploy.sh --limit caas-master-1 --check
+
+# Maximum verbosity for detailed debugging
+./deploy.sh --check --tags master-init -vvv
+
+# Test connectivity before deployment
+ansible all -i inventory/hosts.yml -m ping
 ```
 
 ## Architecture
@@ -325,6 +408,7 @@ kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 
 ```bash
 export KUBE_VERSION="1.28.0-00"
+export CRI_TOOLS_VERSION="1.28.0-00"
 ```
 
 ### Use Different Registries
@@ -379,12 +463,12 @@ echo "  - custom-config" >> roles/k8s-prep/meta/main.yml
 ```bash
 # Different inventories for different environments
 inventory/
-├── dev.yml          # Development environment
-├── staging.yml      # Staging environment
-└── prod.yml         # Production environment
+├── hosts-dev.yml        # Development environment
+├── hosts-staging.yml    # Staging environment
+└── hosts-prod.yml       # Production environment
 
 # Use specific inventory
-./deploy.sh -i inventory/prod.yml
+./deploy.sh -i inventory/hosts-prod.yml
 ```
 
 ### Backup Strategy
@@ -397,7 +481,20 @@ inventory/
 ```bash
 # Monitor deployment progress
 watch -n 2 'ansible all -i inventory/hosts.yml -m shell -a "systemctl status kubelet" --one-line'
+
+# Monitor with verbose output
+./deploy.sh -i inventory/hosts-prod.yml --check -v
 ```
+
+### Version Updates
+
+Current default versions (as of latest update):
+- Kubernetes: `1.32.2-1.1`
+- CRI Tools: `1.32.0-1.1` 
+- ContainerD: `1.7.22`
+- Kube-VIP: `v0.6.4`
+- Pause: `3.10`
+- CNI Plugin: `v1.4.0`
 
 ## Contributing
 
@@ -411,10 +508,13 @@ To improve this playbook:
 ### Testing Changes
 ```bash
 # Test in development environment
-./deploy.sh -i inventory/dev.yml --check
+./deploy.sh -i inventory/hosts-dev.yml --check
 
 # Test specific roles
-./deploy.sh --tags prep --limit dev-master-1
+./deploy.sh --tags prep --limit dev-master-1 -v
+
+# Test with maximum verbosity
+./deploy.sh -i inventory/hosts-dev.yml --check -vvv
 ```
 
 ## License
@@ -427,4 +527,5 @@ For issues and questions:
 1. Check the troubleshooting section
 2. Review Ansible and kubeadm logs
 3. Test with `--check` mode first
-4. Use verbose mode (`-v`) for detailed output
+4. Use verbose mode (`-v`, `-vv`, or `-vvv`) for detailed output
+5. Test connectivity with `ansible all -i inventory/hosts.yml -m ping`

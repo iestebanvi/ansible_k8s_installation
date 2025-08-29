@@ -1,0 +1,20 @@
+all:
+  vars:
+    ansible_user: "{{ ansible_ssh_user }}" 
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+  children:
+    masters:
+      hosts:
+        caas-master-1:
+          ansible_host: 10.235.151.40
+        caas-master-2:
+          ansible_host: 10.235.151.42
+        caas-master-3:
+          ansible_host: 10.235.151.44
+    workers:
+      hosts: {} 
+    kubernetes:
+      children:
+        masters: {}
+        workers: {}
+

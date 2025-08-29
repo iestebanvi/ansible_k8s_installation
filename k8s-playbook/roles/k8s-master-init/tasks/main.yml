@@ -50,6 +50,16 @@
   register: kubeadm_init_result
   when: not k8s_admin_conf.stat.exists
 
+- name: Wait for kubeadm init to complete
+  wait_for:
+    timeout: 10
+  delegate_to: localhost
+
+- name: Display kubeadm init output
+  debug:
+    msg:
+      - "Kubeadm INIT: {{ kubeadm_init_result.stdout }}"
+
 - name: Wait for API server to be ready after init
   wait_for:
     port: 6443
@@ -64,13 +74,12 @@
     replace: 'path: /etc/kubernetes/admin.conf'
   when: not k8s_admin_conf.stat.exists
 
-# SIMPLE TOKEN GENERATION (matching bash script order)
 - name: Generate certificate key
   shell: kubeadm certs certificate-key
   register: cert_key
   changed_when: false
 
-- name: Generate master join command (first, like in bash script)
+- name: Generate master join command
   shell: kubeadm token create --print-join-command --certificate-key {{ cert_key.stdout }}
   register: master_join_cmd
   changed_when: false
