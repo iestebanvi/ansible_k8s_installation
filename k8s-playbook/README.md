@@ -258,23 +258,8 @@ kubectl get nodes
 kubectl get pods -A
 ```
 
-### 2. **IMPORTANT: Clean up credentials**
 
-After successful installation, remove credentials:
-
-```bash
-# On each node, edit containerd config
-sudo nano /etc/containerd/config.toml
-# Remove or comment username/password lines
-
-# Restart containerd
-sudo systemctl restart containerd
-
-# Also clean environment variables
-unset AF_API_TOKEN CAAS_SA_AF_TOKEN
-```
-
-### 3. Install CNI
+### 2. Install CNI
 
 The cluster will remain `NotReady` until you install a CNI:
 
@@ -286,7 +271,7 @@ kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
 kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 ```
 
-### 4. (Optional) Remove master taints
+### 3. (Optional) Remove master taints
 
 If you don't have dedicated workers:
 

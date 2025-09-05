@@ -62,34 +62,48 @@
     - inventory_hostname == groups['masters'][0]  # Only run once from first master with --all
   ignore_errors: true
 
-- name: Apply MetalLB OAM IPAddressPool and L2Advertisement
-  shell: |
-    export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl apply -f -<<EOF
-    apiVersion: metallb.io/v1beta1
-    kind: IPAddressPool
-    metadata:
-      name: oam-pool-01
-      namespace: kube-system
-    spec:
-      addresses:
-      - {{ oam_fip_ip }}/32
-    ---
-    apiVersion: metallb.io/v1beta1
-    kind: L2Advertisement
-    metadata:
-      name: oam-01
-      namespace: kube-system
-    spec:
-      ipAddressPools:
-      - oam-pool-01
-      nodeSelectors:
-      - matchLabels:
-          "node-role.kubernetes.io/control-plane": ""
-      interfaces:
-      - {{ host_interface }}
-    EOF
+- name: Create MetalLB configuration file
+  copy:
+    content: |
+      apiVersion: metallb.io/v1beta1
+      kind: IPAddressPool
+      metadata:
+        name: oam-pool-01
+        namespace: t-caas-network
+      spec:
+        addresses:
+        - {{ oam_fip_ip }}/32
+      ---
+      apiVersion: metallb.io/v1beta1
+      kind: L2Advertisement
+      metadata:
+        name: oam-01
+        namespace: t-caas-network
+      spec:
+        ipAddressPools:
+        - oam-pool-01
+        nodeSelectors:
+        - matchLabels:
+            "node-role.kubernetes.io/control-plane": ""
+        interfaces:
+        - {{ host_interface }}
+    dest: /tmp/metallb-config.yaml
+  run_once: true
   when: 
     - oam_fip_ip is defined
     - inventory_hostname == groups['masters'][0]
-  ignore_errors: true
+
+- name: Apply MetalLB OAM IPAddressPool and L2Advertisement
+  shell: |
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl apply -f /tmp/metallb-config.yaml
+  when:
+    - oam_fip_ip is defined
+    - inventory_hostname == groups['masters'][0]
+
+- name: Remove temporary MetalLB config file
+  file:
+    path: /tmp/metallb-config.yaml
+    state: absent
+  when:
+    - inventory_hostname == groups['masters'][0]
